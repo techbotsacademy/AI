@@ -120,6 +120,22 @@
       img.src = src;
     }
 
+    let port;
+    let writer;
+    
+    async function connectSerial() {
+      if(port == null){
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+        writer = port.writable.getWriter();
+      }
+    }
+    
+    async function sendToArduino(text) {
+      connectSerial();
+      const encoder = new TextEncoder();
+      await writer.write(encoder.encode(text + "\n"));
+    }
     function generateRGBImage(){
       if(!loadedImage){ alert('Please load an image first.'); return; }
       const step = Math.max(1, parseInt(stepInput.value,10) || 4);
@@ -180,6 +196,14 @@
       a.download = 'rgb-values.png';
       a.click();
     });
+
+    // Handle click on numeric RGB cells to show RGB values
+rgbGridDiv.addEventListener('click', (e) => {
+  const cell = e.target.closest('.cell');
+  if (!cell) return; // Clicked outside a cell
+  const rgbText = cell.textContent.replace(/\[|\]/g, ''); // Remove brackets
+  sendToArduino(rgbText);
+});
 
     const sampleDataURL = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="256" height="128"><rect width="256" height="128" fill="lightblue"/><circle cx="64" cy="64" r="48" fill="orange"/><rect x="140" y="24" width="80" height="80" fill=\"%234caf50\"/></svg>';
     loadImage(sampleDataURL);
