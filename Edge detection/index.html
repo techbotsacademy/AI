@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Image → Grayscale + Numeric RGB Grid (Image Shape)</title>
+<style>
+  body {
+    background: #0f1724;
+    color: #e6eef8;
+    font-family: "Segoe UI", Roboto, sans-serif;
+    margin: 20px;
+  }
+  h1 { font-size: 20px; margin-bottom: 12px; }
+  .container { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; }
+  .card {
+    background: #0b1220;
+    padding: 12px;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  }
+  .card canvas, .card img {
+    display: block;
+    border-radius: 8px;
+    max-width: 100%;
+    height: auto;
+  }
+  #rgbGrid {
+    display: grid;
+    justify-content: center;
+    margin-top: 10px;
+    line-height: 1;
+    font-size: 8px;
+  }
+  .cell {
+    width: 6px;
+    height: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    cursor: pointer;
+    user-select: none;
+    color: #fff;
+  }
+  small { color: #9aa4b2; }
+</style>
+</head>
+<body>
+  <h1>Image → Grayscale + Numeric RGB grid (preserves shape)</h1>
+
+  <div class="container">
+    <div class="card">
+      <small>Original image</small>
+      <img id="sourceImage" alt="sample"
+        src='data:image/svg+xml;utf8,
+        <svg xmlns="http://www.w3.org/2000/svg" width="600" height="360">
+          <defs>
+            <linearGradient id="g1" x1="0" x2="1">
+              <stop offset="0" stop-color="%23ff6b6b"/>
+              <stop offset="0.5" stop-color="%23ffd166"/>
+              <stop offset="1" stop-color="%236beaa4"/>
+            </linearGradient>
+            <linearGradient id="g2" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0" stop-color="%2366a0ff"/>
+              <stop offset="1" stop-color="%238b6bff"/>
+            </linearGradient>
+          </defs>
+          <rect width="600" height="360" fill="url(%23g1)"/>
+          <circle cx="450" cy="90" r="80" fill="url(%23g2)" />
+          <rect x="60" y="200" width="220" height="120" rx="18" ry="18" fill="%230b1220" opacity="0.25"/>
+        </svg>' />
+    </div>
+
+    <div class="card">
+      <small>Grayscale version</small>
+      <canvas id="grayCanvas" width="320" height="213"></canvas>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:24px;">
+    <small>Numeric RGB grid (with grayscale shading)</small>
+    <div id="rgbGrid"></div>
+  </div>
+
+<script>
+const img = document.getElementById('sourceImage');
+const grayCanvas = document.getElementById('grayCanvas');
+const grayCtx = grayCanvas.getContext('2d');
+const rgbGrid = document.getElementById('rgbGrid');
+
+img.addEventListener('load', processImage);
+if (img.complete) processImage();
+
+function processImage() {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  grayCanvas.width = w;
+  grayCanvas.height = h;
+
+  // Draw image on hidden canvas to get pixels
+  const off = document.createElement('canvas');
+  off.width = w; off.height = h;
+  const ctx = off.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+
+  // Draw grayscale version
+  const grayData = grayCtx.createImageData(w, h);
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i], g = data[i+1], b = data[i+2];
+    const gray = 0.21*r + 0.72*g + 0.07*b;
+    grayData.data[i] = grayData.data[i+1] = grayData.data[i+2] = gray;
+    grayData.data[i+3] = 255;
+  }
+  grayCtx.putImageData(grayData, 0, 0);
+
+  // Build grid with same shape
+  rgbGrid.style.gridTemplateColumns = `repeat(${w}, 1fr)`;
+  rgbGrid.innerHTML = '';
+
+  // To keep browser responsive, skip pixels in steps (2 or 3 for big images)
+  const step = (w > 200) ? 2 : 1;
+
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const i = (y*w + x)*4;
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const gray = Math.round(0.21*r + 0.72*g + 0.07*b);
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.style.background = `rgb(${gray},${gray},${gray})`;
+      cell.style.color = (gray > 150) ? '#000' : '#fff';
+      cell.textContent = ''; // tiny cells, optional numeric text
+      cell.title = `${r},${g},${b}`;
+      cell.addEventListener('click', () => {
+        prompt('RGB (comma-separated):', `${r},${g},${b}`);
+      });
+      rgbGrid.appendChild(cell);
+    }
+  }
+}
+</script>
+</body>
+</html>
