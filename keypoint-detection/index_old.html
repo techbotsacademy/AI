@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Pose Detection with Grid Background & Generate Button</title>
+  <title>Pose Detection with Grid Background</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
   <style>
@@ -12,22 +12,6 @@
       background: #f8f9fa;
     }
     h1 { color: #333; }
-    #controls {
-      margin-top: 10px;
-    }
-    #generateBtn {
-      background: #007BFF;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      font-size: 16px;
-      border-radius: 5px;
-      cursor: pointer;
-      transition: background 0.3s;
-    }
-    #generateBtn:hover {
-      background: #0056b3;
-    }
     #container {
       display: flex;
       justify-content: center;
@@ -59,17 +43,13 @@
 </head>
 <body>
   <h1>Pose Detection with Grid Background</h1>
-
-  <div id="controls">
-    <input type="file" id="imageUpload" accept="image/*" />
-    <button id="generateBtn">Generate Keypoints</button>
-  </div>
-
+  <input type="file" id="imageUpload" accept="image/*" />
   <p id="loader">Loading model and detecting pose...</p>
 
   <div id="container">
     <div>
       <h3>Original Image</h3>
+      <!-- Default image from your upload -->
       <img id="inputImage" src="default.png" crossorigin="anonymous" />
     </div>
     <div>
@@ -84,7 +64,6 @@
 
   <script>
     let net;
-    let imageReady = false;
 
     async function loadModel() {
       document.getElementById('loader').style.display = 'block';
@@ -111,26 +90,23 @@
     }
 
     async function detectPose(imageElement) {
-      if (!net || !imageElement.complete) return;
-
       const canvas = document.getElementById('outputCanvas');
       const ctx = canvas.getContext('2d');
       canvas.width = imageElement.width;
       canvas.height = imageElement.height;
 
       document.getElementById('loader').style.display = 'block';
-
       const pose = await net.estimateSinglePose(imageElement, { flipHorizontal: false });
 
       // Draw grid
       drawGrid(ctx, canvas.width, canvas.height, 50);
 
-      // Draw image semi-transparent
+      // Draw image slightly transparent
       ctx.globalAlpha = 0.85;
       ctx.drawImage(imageElement, 0, 0, imageElement.width, imageElement.height);
       ctx.globalAlpha = 1.0;
 
-      // Draw red keypoints
+      // Draw keypoints
       pose.keypoints.forEach(kp => {
         if (kp.score > 0.5) {
           ctx.beginPath();
@@ -147,7 +123,7 @@
       document.getElementById('loader').style.display = 'none';
     }
 
-    // Handle image upload
+    // Handle new image uploads
     document.getElementById('imageUpload').addEventListener('change', (event) => {
       const file = event.target.files[0];
       if (!file) return;
@@ -156,28 +132,15 @@
       const reader = new FileReader();
       reader.onload = function(e) {
         img.src = e.target.result;
-        img.onload = () => {
-          imageReady = true;
-        };
+        img.onload = () => detectPose(img);
       };
       reader.readAsDataURL(file);
     });
 
-    // Run pose detection only when "Generate" is clicked
-    document.getElementById('generateBtn').addEventListener('click', () => {
-      const img = document.getElementById('inputImage');
-      if (img.complete) {
-        detectPose(img);
-      } else {
-        alert("Image not ready yet. Please wait or upload an image.");
-      }
-    });
-
-    // Load model on startup
+    // Load model and run on default image
     loadModel().then(() => {
-      // Default image is ready → allow user to click Generate
-      const img = document.getElementById('inputImage');
-      img.onload = () => { imageReady = true; };
+      const defaultImg = document.getElementById('inputImage');
+      defaultImg.onload = () => detectPose(defaultImg);
     });
   </script>
 </body>
