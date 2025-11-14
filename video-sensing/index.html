@@ -1,0 +1,206 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Video → RGB Grid</title>
+<style>
+  body { background:#111; color:#eee; font-family:Arial; padding:10px; }
+  video, canvas { background:#000; border:1px solid #444; }
+  #controls { margin-bottom:12px; display:flex; gap:12px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+
+<h2>Video → RGB Grid</h2>
+
+<div id="controls">
+  <button id="startCam">Start Webcam</button>
+  <button id="stopCam" disabled>Stop Webcam</button>
+  <input type="file" id="fileInput" accept="video/*">
+  <label><input id="mirror" type="checkbox"> Mirror</label>
+
+  <label>Block: <span id="blockLabel">10</span></label>
+  <input type="range" id="blockSize" min="5" max="40" value="10">
+
+  <label>FPS: <input type="number" id="fps" min="1" max="60" value="15" style="width:60px"></label>
+
+  <button id="pauseBtn">Pause</button>
+  <button id="snapBtn">Snapshot Arrays</button>
+</div>
+
+<div style="display:flex; gap:20px;">
+  <div>
+    <div>Original (200×200)</div>
+    <video id="video" autoplay muted playsinline style="display:none;"></video>
+    <canvas id="videoCanvas" width="200" height="200"></canvas>
+  </div>
+
+  <div>
+    <div>RGB Grid (800x800)</div>
+    <canvas id="rgbCanvas" width="800" height="800"></canvas>
+  </div>
+</div>
+
+<script>
+const video = document.getElementById("video");
+const vCan = document.getElementById("videoCanvas");
+const rCan = document.getElementById("rgbCanvas");
+
+const ctxV = vCan.getContext("2d", {willReadFrequently:true});
+const ctxR = rCan.getContext("2d", {willReadFrequently:true});
+
+const startCam = document.getElementById("startCam");
+const stopCam = document.getElementById("stopCam");
+const fileInput = document.getElementById("fileInput");
+const mirror = document.getElementById("mirror");
+const blockSizeInput = document.getElementById("blockSize");
+const blockLabel = document.getElementById("blockLabel");
+const fpsInput = document.getElementById("fps");
+const pauseBtn = document.getElementById("pauseBtn");
+const snapBtn = document.getElementById("snapBtn");
+
+let stream = null;
+let raf = null;
+let paused = false;
+let blockSize = 10;
+
+blockSizeInput.oninput = () => {
+  blockSize = parseInt(blockSizeInput.value);
+  blockLabel.textContent = blockSize;
+};
+
+startCam.onclick = async () => {
+    // 1. Get the stream
+    stream = await navigator.mediaDevices.getUserMedia({video:true});
+    video.srcObject = stream;
+
+    // 2. Wait for the stream metadata to load, then PLAY the video
+    video.onloadedmetadata = () => {
+        video.play(); // <-- START PLAYING THE VIDEO HERE
+        startCam.disabled = true;
+        stopCam.disabled = false;
+        paused = false;
+        loop(); // Start the drawing loop
+    };
+    
+    // Fallback if metadata is already loaded (less common)
+    if (video.readyState >= 1) {
+        video.onloadedmetadata(); // Execute immediately if already ready
+    }
+};
+
+/*startCam.onclick = async () => {
+  stream = await navigator.mediaDevices.getUserMedia({video:true});
+  video.srcObject = stream;
+  startCam.disabled = true;
+  stopCam.disabled = false;
+  paused = false;
+  loop();
+};*/
+
+stopCam.onclick = () => {
+  if(stream) stream.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+  startCam.disabled = false;
+  stopCam.disabled = true;
+};
+
+fileInput.onchange = (e) => {
+  stopCam.onclick();
+  const f = e.target.files[0];
+  if (f) {
+    video.src = URL.createObjectURL(f);
+    video.play();
+    paused = false;
+    loop();
+  }
+};
+
+pauseBtn.onclick = () => {
+  paused = !paused;
+  pauseBtn.textContent = paused ? "Resume" : "Pause";
+};
+
+snapBtn.onclick = () => {
+  alert("Snapshot copied to clipboard (JSON array)");
+  navigator.clipboard.writeText(JSON.stringify(lastBlocks));
+};
+
+let lastBlocks = [];
+let lastFrame = 0;
+
+function loop(ts=0) {
+  raf = requestAnimationFrame(loop);
+  if (paused) return;
+
+  const fps = parseInt(fpsInput.value);
+  if (ts - lastFrame < 1000/fps) return;
+  lastFrame = ts;
+
+  if(video.readyState >= 2) {
+    drawFrame();
+  }
+}
+
+function drawFrame() {
+  // draw original 200x200
+  ctxV.clearRect(0,0,200,200);
+  
+  if(mirror.checked) {
+    ctxV.save();
+    ctxV.scale(-1,1);
+    ctxV.drawImage(video,-200,0,200,200);
+    ctxV.restore();
+  } else {
+    ctxV.drawImage(video,0,0,200,200);
+  }
+
+  const img = ctxV.getImageData(0,0,200,200);
+  const d = img.data;
+
+  ctxR.clearRect(0,0,800,800);
+
+  lastBlocks = [];
+  const scale = 800/200;
+
+  for(let by=0; by<200; by+=blockSize){
+    const row = [];
+
+    for(let bx=0; bx<200; bx+=blockSize){
+      let r=0,g=0,b=0,count=0;
+
+      for(let y=by; y<by+blockSize && y<200; y++){
+        for(let x=bx; x<bx+blockSize && x<200; x++){
+          let i = (y*200 + x)*4;
+          r+=d[i];
+          g+=d[i+1];
+          b+=d[i+2];
+          count++;
+        }
+      }
+
+      r = Math.round(r/count);
+      g = Math.round(g/count);
+      b = Math.round(b/count);
+
+      row.push([r,g,b]);
+
+      const sx = bx*scale;
+      const sy = by*scale;
+
+      ctxR.fillStyle = `rgb(${r},${g},${b})`;
+      ctxR.fillRect(sx, sy, blockSize*scale, blockSize*scale);
+
+      ctxR.fillStyle = (r+g+b)/3 > 128 ? "#000" : "#fff";
+      ctxR.font = `10px monospace`;//`${Math.max(5,blockSize*scale/4)}px monospace`;
+      ctxR.textAlign = "center";
+      ctxR.textBaseline = "middle";
+      ctxR.fillText(`[${r},${g},${b}]`, sx+blockSize*scale/2, sy+blockSize*scale/2);
+    }
+    lastBlocks.push(row);
+  }
+}
+</script>
+
+</body>
+</html>
