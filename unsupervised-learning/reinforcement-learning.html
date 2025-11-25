@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Reinforcement Learning Demo — Q-Learning GridWorld</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#f4fbff;color:#042a3a;padding:18px}
+  h1{margin:0 0 6px;font-size:20px}
+  .wrap{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}
+  .panel{background:white;padding:12px;border-radius:10px;box-shadow:0 6px 18px rgba(2,6,23,0.06);min-width:280px}
+  #canvas{background:linear-gradient(#fff,#eef);border-radius:8px;border:1px solid #dbeafe}
+  .controls{display:grid;gap:8px}
+  label{font-size:13px;color:#064059}
+  input[type=number], input[type=range]{width:100%}
+  .row{display:flex;gap:8px;align-items:center}
+  button{padding:8px 10px;border-radius:8px;border:0;background:#1d4ed8;color:white;cursor:pointer;font-weight:600}
+  button.ghost{background:transparent;border:1px solid #c7d2fe;color:#1d4ed8}
+  .muted{color:#2b6c80;font-size:13px}
+  .small{font-size:12px;color:#0b4b5b}
+  .stats{font-family:monospace;background:#f1f8fb;padding:8px;border-radius:6px}
+  .grid-info{display:flex;gap:8px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+  <h1>Reinforcement Learning: Q-Learning GridWorld</h1>
+  <p class="muted">Interactive demo: watch the agent learn to reach the goal while avoiding the pit. Adjust α (alpha), γ (gamma), and ε (epsilon) to see learning behaviour.</p>
+
+  <div class="wrap">
+    <div class="panel">
+      <canvas id="canvas" width="500" height="500"></canvas>
+      <div style="margin-top:10px" class="grid-info">
+        <div class="small"><strong>Legend:</strong> <span style="background:#e6ffed;padding:4px;border-radius:4px">Goal +10</span> <span style="background:#ffecec;padding:4px;border-radius:4px">Pit −10</span> <span style="background:#edf2ff;padding:4px;border-radius:4px">Start</span></div>
+        <div class="small">Step reward: <code>-0.1</code></div>
+      </div>
+    </div>
+
+    <div class="panel" style="min-width:320px">
+      <div class="controls">
+        <div class="row">
+          <label style="flex:1">α (learning rate): <strong id="alphaVal">0.5</strong></label>
+        </div>
+        <input id="alpha" type="range" min="0" max="1" step="0.01" value="0.5">
+
+        <div class="row">
+          <label style="flex:1">γ (discount factor): <strong id="gammaVal">0.9</strong></label>
+        </div>
+        <input id="gamma" type="range" min="0" max="1" step="0.01" value="0.9">
+
+        <div class="row">
+          <label style="flex:1">ε (epsilon - exploration): <strong id="epsilonVal">0.2</strong></label>
+        </div>
+        <input id="epsilon" type="range" min="0" max="1" step="0.01" value="0.2">
+
+        <div class="row">
+          <label style="flex:1">Episodes to train:</label>
+          <input id="episodes" type="number" min="1" value="200">
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="trainBtn">Train</button>
+          <button id="stepEpBtn" class="ghost">Run 1 Episode</button>
+          <button id="pauseBtn" class="ghost">Pause</button>
+          <button id="resetBtn" class="ghost">Reset</button>
+        </div>
+
+        <div style="margin-top:8px">
+          <div class="stats" id="stats">
+            Episode: 0 | Step: 0 | Episode Reward: 0.00
+          </div>
+        </div>
+
+        <div style="margin-top:8px" class="small">
+          <strong>How it works (short):</strong>
+          The agent starts at the green cell, chooses actions using ε-greedy policy, receives rewards, and updates Q(s,a) using: <code>Q ← Q + α (r + γ maxQ' − Q)</code>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*
+Simple Q-Learning GridWorld demo
+Grid: N x N
+State: (x,y) flattened as s = y*N + x
+Actions: 0=up,1=right,2=down,3=left
+*/
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const N = 5;
+const cellSize = canvas.width / N;
+
+const alphaEl = document.getElementById('alpha'), gammaEl = document.getElementById('gamma'), epsilonEl = document.getElementById('epsilon');
+const alphaVal = document.getElementById('alphaVal'), gammaVal = document.getElementById('gammaVal'), epsilonVal = document.getElementById('epsilonVal');
+const episodesInput = document.getElementById('episodes');
+const trainBtn = document.getElementById('trainBtn'), stepEpBtn = document.getElementById('stepEpBtn'), pauseBtn = document.getElementById('pauseBtn'), resetBtn = document.getElementById('resetBtn');
+const statsDiv = document.getElementById('stats');
+
+// Environment config
+const START = {x:0,y:0};
+const GOAL = {x:4,y:4}; // +10
+const PIT = {x:3,y:2};  // -10
+const STEP_REWARD = -0.1;
+
+// Q-table: states x actions
+let Q = new Float32Array(N*N*4);
+function idx(s,a){ return s*4 + a; }
+
+function stateFromXY(x,y){ return y*N + x; }
+function xyFromState(s){ return {x: s % N, y: Math.floor(s / N)}; }
+
+// Agent state
+let agent = {x: START.x, y: START.y};
+let episode = 0, stepCount = 0, epReward = 0;
+let running = false;
+let trainInterval = null;
+
+function resetAgent(){ agent.x = START.x; agent.y = START.y; stepCount = 0; epReward = 0; }
+
+// helpers
+function inGrid(x,y){ return x>=0 && x<N && y>=0 && y<N; }
+
+function stepEnv(action){
+  // actions: 0 up,1 right,2 down,3 left
+  let nx = agent.x, ny = agent.y;
+  if(action===0) ny--;
+  if(action===1) nx++;
+  if(action===2) ny++;
+  if(action===3) nx--;
+  // clamp
+  if(!inGrid(nx,ny)){ nx = agent.x; ny = agent.y; } // bump against wall -> stay
+  // reward
+  let reward = STEP_REWARD;
+  let done = false;
+  if(nx===GOAL.x && ny===GOAL.y){ reward = 10; done = true; }
+  if(nx===PIT.x && ny===PIT.y){ reward = -10; done = true; }
+  const prev = {x:agent.x, y:agent.y};
+  // move
+  agent.x = nx; agent.y = ny;
+  return {prev, next: {x:nx,y:ny}, reward, done};
+}
+
+function argmaxActions(s){
+  // return argmax action index (break ties randomly)
+  let best = -Infinity; let bestA = [];
+  for(let a=0;a<4;a++){
+    const v = Q[idx(s,a)];
+    if(v > best){ best = v; bestA = [a]; }
+    else if(Math.abs(v - best) < 1e-6){ bestA.push(a); }
+  }
+  return bestA[Math.floor(Math.random()*bestA.length)];
+}
+
+function chooseAction(s, eps){
+  if(Math.random() < eps) return Math.floor(Math.random()*4);
+  return argmaxActions(s);
+}
+
+// Q-learning update
+function qUpdate(s,a,r,s2, alpha, gamma){
+  let maxNext = -Infinity;
+  for(let na=0; na<4; na++){
+    const v = Q[idx(s2,na)];
+    if(v > maxNext) maxNext = v;
+  }
+  if(maxNext === -Infinity) maxNext = 0;
+  const cur = Q[idx(s,a)];
+  const target = r + gamma * maxNext;
+  Q[idx(s,a)] = cur + alpha * (target - cur);
+}
+
+// Rendering
+function drawGrid(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // cells
+  for(let y=0;y<N;y++){
+    for(let x=0;x<N;x++){
+      const left = x*cellSize, top = y*cellSize;
+      // background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(left, top, cellSize, cellSize);
+      // special cells
+      if(x===GOAL.x && y===GOAL.y){
+        ctx.fillStyle = '#e6ffed'; ctx.fillRect(left,top,cellSize,cellSize);
+      } else if(x===PIT.x && y===PIT.y){
+        ctx.fillStyle = '#ffecec'; ctx.fillRect(left,top,cellSize,cellSize);
+      } else if(x===START.x && y===START.y){
+        ctx.fillStyle = '#eef5ff'; ctx.fillRect(left,top,cellSize,cellSize);
+      }
+      // border
+      ctx.strokeStyle = '#d1e8f6'; ctx.strokeRect(left, top, cellSize, cellSize);
+      // draw Q-values as small numbers/arrows
+      drawQInCell(x,y);
+    }
+  }
+
+  // draw policy overlay (best action arrow)
+  for(let y=0;y<N;y++){
+    for(let x=0;x<N;x++){
+      const s = stateFromXY(x,y);
+      // skip terminals
+      if((x===GOAL.x && y===GOAL.y) || (x===PIT.x && y===PIT.y)) continue;
+      const best = argmaxActions(s);
+      drawArrowInCell(x,y,best, '#0b4f6c');
+    }
+  }
+
+  // draw agent as circle
+  const ax = agent.x*cellSize + cellSize/2;
+  const ay = agent.y*cellSize + cellSize/2;
+  ctx.beginPath();
+  ctx.fillStyle = '#ff8a65'; ctx.strokeStyle = '#c14818';
+  ctx.arc(ax,ay, cellSize*0.22, 0, Math.PI*2);
+  ctx.fill(); ctx.stroke();
+}
+
+function drawQInCell(x,y){
+  const s = stateFromXY(x,y);
+  const left = x*cellSize, top = y*cellSize;
+  ctx.save();
+  ctx.translate(left, top);
+  ctx.font = `${Math.max(9, Math.floor(cellSize*0.12))}px monospace`;
+  ctx.fillStyle = '#064059';
+  // show Q-values small near each edge
+  const pad = Math.max(4, Math.floor(cellSize*0.06));
+  const qUp = Q[idx(s,0)].toFixed(2);
+  const qRight = Q[idx(s,1)].toFixed(2);
+  const qDown = Q[idx(s,2)].toFixed(2);
+  const qLeft = Q[idx(s,3)].toFixed(2);
+  ctx.fillText(qUp, cellSize/2 - 10, pad + 8);
+  ctx.fillText(qRight, cellSize - 34, cellSize/2 + 4);
+  ctx.fillText(qDown, cellSize/2 - 8, cellSize - 6);
+  ctx.fillText(qLeft, pad + 2, cellSize/2 + 4);
+  ctx.restore();
+}
+
+function drawArrowInCell(x,y,action,color){
+  const cx = x*cellSize + cellSize/2;
+  const cy = y*cellSize + cellSize/2;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2;
+  const len = cellSize*0.28;
+  ctx.beginPath();
+  if(action===0){ ctx.moveTo(0,len); ctx.lineTo(0,-len); ctx.lineTo(-6,-len+8); ctx.moveTo(0,-len); ctx.lineTo(6,-len+8); }
+  if(action===1){ ctx.moveTo(-len,0); ctx.lineTo(len,0); ctx.lineTo(len-8,-6); ctx.moveTo(len,0); ctx.lineTo(len-8,6); }
+  if(action===2){ ctx.moveTo(0,-len); ctx.lineTo(0,len); ctx.lineTo(-6,len-8); ctx.moveTo(0,len); ctx.lineTo(6,len-8); }
+  if(action===3){ ctx.moveTo(len,0); ctx.lineTo(-len,0); ctx.lineTo(-len+8,-6); ctx.moveTo(-len,0); ctx.lineTo(-len+8,6); }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Main episode runner (synchronous small loop for one episode with animation)
+async function runEpisode(callbackPerStep){
+  resetAgent();
+  stepCount = 0; epReward = 0;
+  const alpha = parseFloat(alphaEl.value), gamma = parseFloat(gammaEl.value), eps = parseFloat(epsilonEl.value);
+  while(true){
+    const s = stateFromXY(agent.x, agent.y);
+    const a = chooseAction(s, eps);
+    const {prev,next,reward,done} = stepEnv(a);
+    const s2 = stateFromXY(next.x,next.y);
+    qUpdate(s,a,reward,s2,alpha,gamma);
+    stepCount++;
+    epReward += reward;
+    if(typeof callbackPerStep === 'function') callbackPerStep({s,a,prev,next,reward,done});
+    // render
+    drawGrid();
+    updateStats();
+    // small pause to animate
+    await new Promise(r => setTimeout(r, 120));
+    if(done || stepCount > 200){
+      break;
+    }
+  }
+}
+
+// control functions
+async function trainNEpisodes(n){
+  running = true;
+  trainBtn.disabled = true;
+  stepEpBtn.disabled = true;
+  pauseBtn.disabled = false;
+  resetBtn.disabled = true;
+  for(let i=0;i<n;i++){
+    if(!running) break;
+    episode++;
+    await runEpisode();
+    // small gap between episodes
+    await new Promise(r => setTimeout(r, 60));
+  }
+  trainBtn.disabled = false;
+  stepEpBtn.disabled = false;
+  resetBtn.disabled = false;
+  running = false;
+  updateStats();
+}
+
+trainBtn.addEventListener('click', ()=>{
+  const n = Math.max(1, parseInt(episodesInput.value,10) || 1);
+  trainNEpisodes(n);
+});
+
+stepEpBtn.addEventListener('click', async ()=>{
+  episode++;
+  await runEpisode();
+});
+
+pauseBtn.addEventListener('click', ()=>{
+  running = false;
+});
+
+resetBtn.addEventListener('click', ()=>{
+  // reset Q
+  Q = new Float32Array(N*N*4);
+  episode = 0; stepCount = 0; epReward = 0;
+  resetAgent();
+  drawGrid();
+  updateStats();
+});
+
+// update sliders display
+alphaEl.addEventListener('input', ()=> alphaVal.textContent = alphaEl.value);
+gammaEl.addEventListener('input', ()=> gammaVal.textContent = gammaEl.value);
+epsilonEl.addEventListener('input', ()=> epsilonVal.textContent = epsilonEl.value);
+
+// stats
+function updateStats(){
+  statsDiv.textContent = `Episode: ${episode} | Step: ${stepCount} | Episode Reward: ${epReward.toFixed(2)}`;
+}
+
+// initialize
+resetAgent();
+drawGrid();
+updateStats();
+</script>
+</body>
+</html>

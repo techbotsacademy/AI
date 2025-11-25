@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Finger Detection</title>
+    <style>
+        video, canvas {
+            position: absolute;
+            left: 0; top: 0;
+        }
+        #output {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.6);
+            color: #fff;
+            padding: 10px;
+            font-size: 24px;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+
+<body>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div id="output">Detecting...</div>
+
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+    <script>
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const output = document.getElementById("output");
+
+        function countFingers(landmarks) {
+            // Finger landmarks reference:
+            // Thumb_tip = 4
+            // Index_tip = 8
+            // Middle_tip = 12
+            // Ring_tip = 16
+            // Pinky_tip = 20
+
+            let fingers = 0;
+
+            // Thumb: check x coordinate (handedness ignored for simplicity)
+            if (landmarks[4].x < landmarks[3].x) fingers++;
+
+            // Other fingers: tip higher (y smaller) than knuckle
+            if (landmarks[8].y < landmarks[6].y) fingers++;   // Index
+            if (landmarks[12].y < landmarks[10].y) fingers++; // Middle
+            if (landmarks[16].y < landmarks[14].y) fingers++; // Ring
+            if (landmarks[20].y < landmarks[18].y) fingers++; // Pinky
+
+            return fingers;
+        }
+
+        const hands = new Hands({
+            locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(results => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                // Draw hand skeleton
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS,
+                    {color: '#00FF00', lineWidth: 2});
+                drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 1});
+
+                let fingerCount = countFingers(landmarks);
+
+                if (fingerCount === 0) output.innerText = "0 Fingers Shown";
+                else if (fingerCount === 1) output.innerText = "1 Finger Shown";
+                else output.innerText = fingerCount + " Fingers Shown";
+            } else {
+                output.innerText = "No hand detected";
+            }
+        });
+
+        // Webcam feed
+        const camera = new Camera(video, {
+            onFrame: async () => {
+                await hands.send({image: video});
+            },
+            width: 640,
+            height: 480
+        });
+
+        camera.start();
+    </script>
+</body>
+</html>
